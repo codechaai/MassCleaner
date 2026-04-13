@@ -70,16 +70,23 @@ $skipNames = @(
     "web"
 )
 
-try {
-    if (-not (Get-Module -Name ThreadJob -ListAvailable)) {
-        Write-Host "Installing required module 'ThreadJob'..." -ForegroundColor Yellow
-        Install-Module -Name ThreadJob -Scope CurrentUser -Force -ErrorAction Stop
+if (Get-Module -ListAvailable -Name ThreadJob) {
+    try { Import-Module ThreadJob -ErrorAction Stop } catch {}
+}
+
+function Start-AnyJob {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$ScriptBlock,
+        [Parameter()][object[]]$ArgumentList
+    )
+
+    # Prefer in-process thread jobs when available (PowerShell 7+ or ThreadJob module).
+    if (Get-Command -Name Start-ThreadJob -ErrorAction SilentlyContinue) {
+        return Start-ThreadJob -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList
     }
-    Import-Module ThreadJob -ErrorAction Stop
-} catch {
-    Write-Error "Failed to install or import the 'ThreadJob' module. Please run PowerShell as Administrator or check your internet connection."
-    Write-Error $_.Exception.Message
-    return
+
+    # Windows PowerShell fallback (no extra module install / no prompts).
+    return Start-Job -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList
 }
 
 # -------------------------
@@ -101,7 +108,7 @@ function Find-Projects($path) {
         Write-Progress `
             -Id 1 `
             -Activity "Scanning folders" `
-            -Status "$scanCount scanned | $($projects.Count) projects | $($trashDirs.Count) trash → $relative"
+            -Status "$scanCount scanned | $($projects.Count) projects | $($trashDirs.Count) trash => $relative"
     }
 
     $name = Split-Path $path -Leaf
@@ -131,7 +138,7 @@ function Find-Projects($path) {
     }
 }
 
-Write-Host "🔍 Scanning starting from: $root"
+Write-Host "[SCAN] Scanning starting from: $root"
 $scanStart = Get-Date
 
 Find-Projects $root
@@ -140,7 +147,7 @@ Write-Progress -Id 1 -Completed
 $total = $projects.Count
 $scanTime = (Get-Date) - $scanStart
 
-Write-Host "✅ Scan done | $scanCount folders checked | $total flutter projects | $($trashDirs.Count) trash folders | $($scanTime.TotalSeconds.ToString("0.0"))s`n"
+Write-Host "[OK] Scan done | $scanCount folders checked | $total flutter projects | $($trashDirs.Count) trash folders | $($scanTime.TotalSeconds.ToString('0.0'))s`n"
 
 # -------------------------
 # Trash Deletion Phase (Parallel)
@@ -159,7 +166,7 @@ if ($trashDirs.Count -gt 0) {
         $shouldDelete = $Force.IsPresent
         
         if (-not $shouldDelete) {
-            $confirmation = Read-Host "`n⚠️  WARNING: You are about to permanently delete $($trashDirs.Count) trash folders. Continue? [Y/N]"
+            $confirmation = Read-Host "`n[WARNING] You are about to permanently delete $($trashDirs.Count) trash folders. Continue? [Y/N]"
             if ($confirmation -match "^[Yy]$") {
                 $shouldDelete = $true
             } else {
@@ -169,7 +176,7 @@ if ($trashDirs.Count -gt 0) {
         }
 
         if ($shouldDelete) {
-            Write-Host "`n🗑️  Deleting $($trashDirs.Count) trash folders (node_modules, caches, etc) completely in parallel..."
+            Write-Host "`n[DELETE] Deleting $($trashDirs.Count) trash folders (node_modules, caches, etc) completely in parallel..."
             $deleteStart = Get-Date
             
             $activeDeleteJobs = [System.Collections.Generic.List[System.Management.Automation.Job]]::new()
@@ -209,7 +216,7 @@ if ($trashDirs.Count -gt 0) {
             }
         }
 
-        $job = Start-ThreadJob -ScriptBlock {
+        $job = Start-AnyJob -ScriptBlock {
             param($path)
             $ProgressPreference = 'SilentlyContinue'
             $size = 0
@@ -227,7 +234,7 @@ if ($trashDirs.Count -gt 0) {
                 return @{ Failed = $true; Path = $path; Size = $size }
             }
             return @{ Failed = $false; Size = $size }
-        } -ArgumentList $trash
+        } -ArgumentList @($trash)
         
         # Add metadata for UI tracking
         $job | Add-Member -MemberType NoteProperty -Name "TrashPath" -Value $trash.Replace($root, "").TrimStart("\")
@@ -279,7 +286,7 @@ if ($trashDirs.Count -gt 0) {
 
     Write-Progress -Id 3 -Completed
     $deleteTime = (Get-Date) - $deleteStart
-    Write-Host "✅ Trash deletion complete! Freed: $(Format-Bytes $totalFreedBytes) ($($deleteTime.TotalSeconds.ToString("0.0"))s)`n"
+    Write-Host "[OK] Trash deletion complete! Freed: $(Format-Bytes $totalFreedBytes) ($($deleteTime.TotalSeconds.ToString('0.0'))s)`n"
 }
         }
     }
@@ -288,7 +295,7 @@ if ($total -eq 0) {
     if ($trashDirs.Count -eq 0) {
         Write-Host "No projects or trash found. Exiting."
     } else {
-        Write-Host "🎉 Task completed successfully!"
+        Write-Host "[OK] Task completed successfully!"
     }
     return 
 }
@@ -306,7 +313,7 @@ if ($DryRun) {
     }
     Write-Host ""
 } else {
-    Write-Host "🚀 Starting Flutter Parallel Clean & Pub Get..."
+    Write-Host "[FLUTTER] Starting Flutter Parallel Clean & Pub Get..."
 $activeFlutterJobs = [System.Collections.Generic.List[System.Management.Automation.Job]]::new()
 $cleanCompleted = 0
 $cleanTotal = $projects.Count
@@ -325,7 +332,7 @@ foreach ($dir in $projects) {
         }
     }
 
-    $job = Start-ThreadJob -ScriptBlock {
+    $job = Start-AnyJob -ScriptBlock {
             param($p)
             $ProgressPreference = 'SilentlyContinue'
             Push-Location $p
@@ -333,7 +340,7 @@ foreach ($dir in $projects) {
             flutter pub get *>$null
             Pop-Location
             return $p
-        } -ArgumentList $dir
+        } -ArgumentList @($dir)
     
     # Add metadata for UI tracking
     $job | Add-Member -MemberType NoteProperty -Name "ProjectPath" -Value $dir.Replace($root, "").TrimStart("\")
@@ -389,7 +396,7 @@ while ($activeFlutterJobs.Count -gt 0) {
     $totalTime = (Get-Date) - $cleanStart
     
     Write-Host "`n=====================================================" -ForegroundColor Green
-    Write-Host "🎉 AIO Bulk Cleaner Complete!" -ForegroundColor Green
+    Write-Host "AIO Bulk Cleaner Complete!" -ForegroundColor Green
     Write-Host "=====================================================" -ForegroundColor Green
     Write-Host "Time taken : $($totalTime.ToString('mm\:ss'))"
     Write-Host "Directories: $scanCount scanned"
@@ -397,7 +404,7 @@ while ($activeFlutterJobs.Count -gt 0) {
     Write-Host "Cleaned    : $cleanTotal Flutter projects"
     
     if ($failedDeletions.Count -gt 0) {
-        Write-Host "`n⚠️  WARNING: $($failedDeletions.Count) folders could not be deleted due to permission/lock errors:" -ForegroundColor Yellow
+        Write-Host "`n[WARNING] $($failedDeletions.Count) folders could not be deleted due to permission/lock errors:" -ForegroundColor Yellow
         foreach ($f in $failedDeletions) {
             Write-Host "  - $f" -ForegroundColor DarkGray
         }

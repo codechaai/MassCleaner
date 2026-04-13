@@ -27,14 +27,17 @@ These are executed in parallel (default up to 6 projects at a time) to ensure yo
 
 Simply download or clone this repository, and place `WorkspaceCleaner.ps1` at the root of the folder you want to clean (e.g. `C:\Projects` or `~/Code`).
 
-*Note: The script requires the `ThreadJob` module for multi-threading. It will automatically attempt to install it for the current user if it is missing.*
+**Note:** The script runs on **Windows PowerShell 5.1** and **PowerShell 7+**.
+
+- On **PowerShell 7+**, the script will use thread jobs (`Start-ThreadJob`) when available for best performance.
+- On **Windows PowerShell 5.1**, it automatically falls back to background jobs (`Start-Job`) with no extra modules required.
 
 ## Usage
 
 Open your terminal or PowerShell and run:
 
 ```powershell
-pwsh .\WorkspaceCleaner.ps1
+powershell -ExecutionPolicy Bypass -File .\WorkspaceCleaner.ps1
 ```
 
 By default, the script will:
@@ -50,19 +53,26 @@ You can safely run the script in CI pipelines or customize its multi-threading c
 
 ```powershell
 # Run a dry run to see what *would* be deleted, without actually modifying anything
-pwsh .\WorkspaceCleaner.ps1 -DryRun
+powershell -ExecutionPolicy Bypass -File .\WorkspaceCleaner.ps1 -DryRun
 
 # Bypass the "Are you sure?" confirmation prompt (Great for CI/CD or automation)
-pwsh .\WorkspaceCleaner.ps1 -Force
+powershell -ExecutionPolicy Bypass -File .\WorkspaceCleaner.ps1 -Force
 
 # Change the target directory to clean
-pwsh .\WorkspaceCleaner.ps1 -Path "D:\Archive\Old_Projects"
+powershell -ExecutionPolicy Bypass -File .\WorkspaceCleaner.ps1 -Path "D:\Archive\Old_Projects"
 
 # Increase the number of concurrent Flutter projects being cleaned
-pwsh .\WorkspaceCleaner.ps1 -MaxParallel 10
+powershell -ExecutionPolicy Bypass -File .\WorkspaceCleaner.ps1 -MaxParallel 10
 
 # Increase the number of concurrent Trash folders being deleted
-pwsh .\WorkspaceCleaner.ps1 -MaxDeleteParallel 20
+powershell -ExecutionPolicy Bypass -File .\WorkspaceCleaner.ps1 -MaxDeleteParallel 20
+```
+
+### PowerShell 7 (optional)
+If you have PowerShell 7 installed, you can run the same script with `pwsh`:
+
+```powershell
+pwsh -File .\WorkspaceCleaner.ps1
 ```
 
 ## Safety First
